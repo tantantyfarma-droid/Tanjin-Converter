@@ -378,7 +378,12 @@ async function readEpub(file) {
   const cm = [...opf.getElementsByTagName('meta')].find(m => m.getAttribute('name') === 'cover');
   if (cm) coverHref = manifest[cm.getAttribute('content')];
   if (!coverHref) for (const it of opf.getElementsByTagName('item')) if ((it.getAttribute('properties') || '').includes('cover-image')) coverHref = it.getAttribute('href');
-  const cf = coverHref && zip.file(decodeURIComponent(dir + coverHref));
+  if (!coverHref) for (const it of opf.getElementsByTagName('item')) if ((it.getAttribute('media-type') || '').startsWith('image/')) { coverHref = it.getAttribute('href'); break; }
+  let cf = coverHref && zip.file(decodeURIComponent(dir + coverHref));
+  if (!cf) {  // no cover listed: use the first picture in the file
+    const imgs = zip.file(/\.(jpe?g|png|webp)$/i).sort((a, b) => a.name.localeCompare(b.name, undefined, {numeric: true}));
+    cf = imgs[0] || null;
+  }
   const cover = cf ? await cf.async('blob') : null;
   return {title: first('dc:title'), author: first('dc:creator'), chapters, cover};
 }
