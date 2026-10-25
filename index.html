@@ -3,7 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Manhwa Reader Prep</title>
+<title>TanJin Converter</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%233b5bdb'/%3E%3Ctext x='32' y='42' font-size='28' text-anchor='middle' fill='white' font-family='sans-serif' font-weight='700'%3ETJ%3C/text%3E%3C/svg%3E">
 <style>
 :root{--bg:#f6f5f1;--card:#fff;--text:#1d1d1b;--muted:#6b6a65;--accent:#3b5bdb;--accent-text:#fff;--border:#dcdad2;--ok:#2b8a3e;--err:#c92a2a;
 box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
@@ -18,6 +19,7 @@ p.sub{color:var(--muted);margin:0 0 18px}
 label{display:block;font-weight:600;margin-bottom:6px}
 input[type=text]{width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:16px}
 input[type=file]{width:100%;font-size:15px}
+textarea,select{width:100%;box-sizing:border-box;padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:16px;font-family:inherit}
 button{width:100%;padding:13px;border:0;border-radius:10px;background:var(--accent);color:var(--accent-text);font-size:16px;font-weight:600}
 button:disabled{opacity:.5}
 ol{margin:0;padding-left:20px;color:var(--muted)}
@@ -29,8 +31,8 @@ progress{width:100%;height:14px}
 </head>
 <body>
 <main>
-<h1>Manhwa Reader Prep</h1>
-<p class="sub">Converts manhwa into 320×480 pages for the DIY reader. Everything happens on your device; nothing is uploaded.</p>
+<h1>TanJin Converter</h1>
+<p class="sub">Converts manhwa into 320×480 pages for your TanJin reader. Everything happens on your device; nothing is uploaded.</p>
 
 <div class="card">
 <label for="series">Series name</label>
@@ -54,7 +56,31 @@ progress{width:100%;height:14px}
 <div class="card" id="done" hidden>
 <button id="save">Save ZIP</button>
 <a id="dl" class="hint" hidden>If the download didn’t start, tap here.</a>
-<p class="hint">Easiest: open the reader’s menu, tap Wi-Fi, join its hotspot with your phone, and upload this ZIP at 192.168.4.1. Or unzip it and copy the series folder onto the SD card (keep the folder structure).</p>
+<p class="hint">Easiest: open the TanJin menu, tap Wi-Fi, join its hotspot with your phone, and upload this ZIP at 192.168.4.1. Or unzip it and copy the series folder onto the SD card (keep the folder structure).</p>
+</div>
+
+<div class="card">
+<b>Books and stories (EPUB or text)</b>
+<p class="hint">Only convert books you own or have permission to use. Copy-protected (DRM) EPUBs can’t be converted.</p>
+<label for="btitle">Book title</label>
+<input type="text" id="btitle" placeholder="e.g. My Story" autocomplete="off">
+<div style="height:14px"></div>
+<label for="bfiles">EPUB or TXT file(s)</label>
+<input type="file" id="bfiles" multiple accept=".epub,.txt">
+<div style="height:14px"></div>
+<label for="btext">…or paste text</label>
+<textarea id="btext" rows="4" placeholder="Paste a chapter here"></textarea>
+<div style="height:14px"></div>
+<label for="bsize">Text size</label>
+<select id="bsize"><option value="15">Small</option><option value="17" selected>Medium</option><option value="20">Large</option></select>
+<div style="height:14px"></div>
+<label for="bfont">Font</label>
+<select id="bfont"><option value="serif">Serif (book style)</option><option value="sans">Sans-serif</option></select>
+<div style="height:14px"></div>
+<label for="bstart">First chapter number</label>
+<input type="text" id="bstart" value="1" inputmode="numeric" autocomplete="off">
+<p class="hint">Use 1 for a new book. Text size is fixed when you convert; to change it, convert again. Result goes in a Books folder on the reader.</p>
+<button id="gob">Convert book</button>
 </div>
 
 <div class="card">
@@ -219,6 +245,152 @@ $('save').addEventListener('click', () => {
   link.download = resultName;
   link.hidden = false;
   log('Download started: ' + resultName, 'ok');
+});
+
+// ---------- Books: EPUB / TXT / pasted text -> 320-wide text pages ----------
+const BW = 320, PAD = 18;
+
+function wrap(ctx, text, maxW) {
+  const chars = !/\s/.test(text) && text.length > 40;  // e.g. Chinese or Japanese: no spaces
+  const toks = chars ? [...text] : text.split(/\s+/);
+  const out = [];
+  let line = '';
+  for (const t of toks) {
+    const cand = line ? line + (chars ? '' : ' ') + t : t;
+    if (!line || ctx.measureText(cand).width <= maxW) line = cand;
+    else { out.push(line); line = t; }
+  }
+  if (line) out.push(line);
+  return out;
+}
+
+async function renderChapter(ch, o, emit) {
+  const fs = o.size, lh = Math.round(fs * 1.55);
+  const fam = o.serif ? 'Georgia, "Times New Roman", serif' : 'system-ui, "Segoe UI", Roboto, sans-serif';
+  const m = document.createElement('canvas').getContext('2d');
+  const lines = [{t: '', b: false}];
+  m.font = '700 ' + (fs + 3) + 'px ' + fam;
+  wrap(m, ch.title, BW - 2 * PAD).forEach(t => lines.push({t, b: true}));
+  lines.push({t: '', b: false});
+  m.font = fs + 'px ' + fam;
+  for (const p of ch.paras) {
+    wrap(m, p, BW - 2 * PAD).forEach(t => lines.push({t, b: false}));
+    lines.push({t: '', b: false});
+  }
+  const per = Math.floor(470 / lh);
+  let n = 0;
+  for (let i = 0; i < lines.length; i += per) {
+    const chunk = lines.slice(i, i + per), h = chunk.length * lh;
+    const c = document.createElement('canvas');
+    c.width = BW; c.height = h;
+    const x = c.getContext('2d');
+    x.fillStyle = '#fffdf8'; x.fillRect(0, 0, BW, h);
+    x.fillStyle = '#1b1b1b'; x.textBaseline = 'middle';
+    chunk.forEach((l, k) => { x.font = (l.b ? '700 ' + (fs + 3) : fs) + 'px ' + fam; x.fillText(l.t, PAD, k * lh + lh / 2); });
+    emit(++n, await new Promise(r => c.toBlob(r, 'image/jpeg', 0.92)));
+  }
+  return n;
+}
+
+async function titlePage(title, author) {
+  const c = document.createElement('canvas');
+  c.width = BW; c.height = 480;
+  const x = c.getContext('2d');
+  x.fillStyle = '#2b1b4a'; x.fillRect(0, 0, BW, 480);
+  x.fillStyle = '#ff6fa5'; x.fillRect(40, 150, 240, 3); x.fillRect(40, 340, 240, 3);
+  x.fillStyle = '#ffffff'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.font = '700 28px Georgia, serif';
+  const ls = wrap(x, title, 260).slice(0, 5);
+  ls.forEach((t, i) => x.fillText(t, 160, 245 - (ls.length - 1) * 19 + i * 38));
+  if (author) { x.font = '18px Georgia, serif'; x.fillStyle = '#ffd1e3'; x.fillText(author.slice(0, 30), 160, 395); }
+  return new Promise(r => c.toBlob(r, 'image/jpeg', 0.92));
+}
+
+function splitTxt(text, fallback) {
+  text = text.replace(/\r/g, '');
+  const toParas = s => (/\n\s*\n/.test(s) ? s.split(/\n\s*\n/).map(v => v.replace(/\s*\n\s*/g, ' ').trim()) : s.split('\n').map(v => v.trim())).filter(Boolean);
+  const heads = [...text.matchAll(/^[ \t]*((?:chapter|chap\.?|ch\.?|part|book)[ \t]+[\dIVXLCivxlc]+[^\n]{0,60})[ \t]*$/gim)];
+  if (heads.length < 2) return [{title: fallback, paras: toParas(text)}];
+  const out = [];
+  if (heads[0].index > 200) out.push({title: fallback, paras: toParas(text.slice(0, heads[0].index))});
+  heads.forEach((h, i) => {
+    const end = i + 1 < heads.length ? heads[i + 1].index : text.length;
+    out.push({title: h[1].trim(), paras: toParas(text.slice(h.index + h[0].length, end))});
+  });
+  return out;
+}
+
+async function readEpub(file) {
+  const zip = await JSZip.loadAsync(file);
+  const cont = zip.file('META-INF/container.xml');
+  if (!cont) throw new Error('This does not look like a valid EPUB.');
+  const P = new DOMParser();
+  const root = P.parseFromString(await cont.async('string'), 'application/xml').querySelector('rootfile');
+  const opfPath = root.getAttribute('full-path');
+  const dir = opfPath.includes('/') ? opfPath.slice(0, opfPath.lastIndexOf('/') + 1) : '';
+  const opf = P.parseFromString(await zip.file(opfPath).async('string'), 'application/xml');
+  const first = n => { const e = opf.getElementsByTagName(n)[0]; return e ? e.textContent.trim() : ''; };
+  const manifest = {};
+  for (const it of opf.getElementsByTagName('item')) manifest[it.getAttribute('id')] = it.getAttribute('href');
+  const chapters = [];
+  for (const ref of opf.getElementsByTagName('itemref')) {
+    const href = manifest[ref.getAttribute('idref')];
+    const f = href && zip.file(decodeURIComponent(dir + href));
+    if (!f) continue;
+    const doc = P.parseFromString(await f.async('string'), 'text/html');
+    const paras = [];
+    doc.querySelectorAll('h1,h2,h3,h4,h5,h6,p,li,blockquote').forEach(el => {
+      if (el.querySelector('p,li,blockquote')) return;
+      const t = el.textContent.replace(/\s+/g, ' ').trim();
+      if (t) paras.push(t);
+    });
+    if (paras.join(' ').length < 200) continue;  // skip cover, contents, copyright pages
+    const h = doc.querySelector('h1,h2,h3');
+    const title = h ? h.textContent.replace(/\s+/g, ' ').trim() : '';
+    if (title && paras[0] === title) paras.shift();
+    chapters.push({title: title || 'Chapter ' + (chapters.length + 1), paras});
+  }
+  if (!chapters.length) throw new Error('No readable text found. The EPUB may be copy-protected (DRM), which cannot be converted.');
+  return {title: first('dc:title'), author: first('dc:creator'), chapters};
+}
+
+$('gob').addEventListener('click', async () => {
+  if (window.dlUrl) { URL.revokeObjectURL(window.dlUrl); window.dlUrl = null; }
+  $('dl').hidden = true; doneEl.hidden = true; logEl.textContent = ''; resultBlob = null;
+  bar.hidden = false; bar.value = 0; $('gob').disabled = true;
+  try {
+    let title = $('btitle').value.trim(), author = '', chapters = [];
+    for (const f of [...$('bfiles').files].sort(natural)) {
+      log('Reading ' + f.name + '…');
+      if (/\.epub$/i.test(f.name)) { const e = await readEpub(f); title = title || e.title; author = e.author; chapters.push(...e.chapters); }
+      else if (/\.txt$/i.test(f.name)) chapters.push(...splitTxt(await f.text(), f.name.replace(/\.[^.]+$/, '')));
+    }
+    const pasted = $('btext').value.trim();
+    if (pasted) chapters.push(...splitTxt(pasted, title || 'Chapter 1'));
+    if (!chapters.length) throw new Error('Choose an EPUB or TXT file, or paste some text.');
+    title = title || 'Book';
+    const series = safe(title), start = Math.max(1, parseInt($('bstart').value, 10) || 1);
+    const o = {size: +$('bsize').value, serif: $('bfont').value === 'serif'};
+    const zip = new JSZip();
+    log('"' + title + '": ' + chapters.length + ' chapter(s)');
+    for (let i = 0; i < chapters.length; i++) {
+      const folder = 'Chapter_' + String(i + start).padStart(3, '0');
+      let off = 0;
+      if (i === 0 && start === 1) { zip.file('Books/' + series + '/' + folder + '/001.jpg', await titlePage(title, author)); off = 1; }
+      const n = await renderChapter(chapters[i], o, (k, b) => zip.file('Books/' + series + '/' + folder + '/' + String(k + off).padStart(3, '0') + '.jpg', b));
+      log(folder + ': ' + (n + off) + ' pages', 'ok');
+      bar.value = Math.round((i + 1) / chapters.length * 100);
+    }
+    log('Packing ZIP…');
+    resultBlob = await zip.generateAsync({type: 'blob', compression: 'STORE'});
+    resultName = series + '_book.zip';
+    log('Done: ' + (resultBlob.size / 1048576).toFixed(1) + ' MB', 'ok');
+    doneEl.hidden = false;
+  } catch (e) {
+    log('Error: ' + (e && e.message || e), 'err');
+  } finally {
+    $('gob').disabled = false;
+  }
 });
 </script>
 </body>
