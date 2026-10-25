@@ -27,13 +27,18 @@ ol{margin:0;padding-left:20px;color:var(--muted)}
 progress{width:100%;height:14px}
 #log{font:13px/1.45 ui-monospace,Consolas,monospace;white-space:pre-wrap;max-height:220px;overflow:auto;margin-top:10px}
 .ok{color:var(--ok)}.err{color:var(--err)}
+.tabs{display:flex;gap:8px;margin-bottom:14px}
+.tab{flex:1;width:auto;background:var(--card);color:var(--text);border:1px solid var(--border)}
+.tab.on{background:var(--accent);color:var(--accent-text);border-color:var(--accent)}
 </style>
 </head>
 <body>
 <main>
 <h1>TanJin Converter</h1>
 <p class="sub">Converts manhwa into 320×480 pages for your TanJin reader. Everything happens on your device; nothing is uploaded.</p>
+<div class="tabs"><button id="tabm" class="tab on">Manhwa</button><button id="tabb" class="tab">Books</button></div>
 
+<div id="tabManhwa">
 <div class="card">
 <label for="series">Series name</label>
 <input type="text" id="series" placeholder="e.g. Solo Leveling" autocomplete="off">
@@ -49,8 +54,7 @@ progress{width:100%;height:14px}
 
 <div class="card">
 <button id="go" disabled>Convert</button>
-<progress id="bar" value="0" max="100" hidden></progress>
-<div id="log"></div>
+</div>
 </div>
 
 <div class="card" id="done" hidden>
@@ -59,6 +63,7 @@ progress{width:100%;height:14px}
 <p class="hint">Easiest: open the TanJin menu, tap Wi-Fi, join its hotspot with your phone, and upload this ZIP at 192.168.4.1. Or unzip it and copy the series folder onto the SD card (keep the folder structure).</p>
 </div>
 
+<div id="tabBooks" hidden>
 <div class="card">
 <b>Books and stories (EPUB or text)</b>
 <p class="hint">Only convert books you own or have permission to use. Copy-protected (DRM) EPUBs can’t be converted.</p>
@@ -71,6 +76,10 @@ progress{width:100%;height:14px}
 <label for="btext">…or paste text</label>
 <textarea id="btext" rows="4" placeholder="Paste a chapter here"></textarea>
 <div style="height:14px"></div>
+<label for="bcover">Cover image (optional)</label>
+<input type="file" id="bcover" accept="image/*">
+<p class="hint">EPUBs usually carry their own cover and it is used automatically. A cover you pick here replaces it.</p>
+<div style="height:14px"></div>
 <label for="bsize">Text size</label>
 <select id="bsize"><option value="15">Small</option><option value="17" selected>Medium</option><option value="20">Large</option></select>
 <div style="height:14px"></div>
@@ -81,6 +90,12 @@ progress{width:100%;height:14px}
 <input type="text" id="bstart" value="1" inputmode="numeric" autocomplete="off">
 <p class="hint">Use 1 for a new book. Text size is fixed when you convert; to change it, convert again. Result goes in a Books folder on the reader.</p>
 <button id="gob">Convert book</button>
+</div>
+</div>
+
+<div class="card" id="outcard" hidden>
+<progress id="bar" value="0" max="100"></progress>
+<div id="log"></div>
 </div>
 
 <div class="card">
@@ -199,7 +214,7 @@ goEl.addEventListener('click', async () => {
   if (window.dlUrl) { URL.revokeObjectURL(window.dlUrl); window.dlUrl = null; }
   $('dl').hidden = true;
   goEl.disabled = true; doneEl.hidden = true; logEl.textContent = ''; resultBlob = null;
-  bar.hidden = false; bar.value = 0;
+  bar.hidden = false; bar.value = 0; $('outcard').hidden = false;
   try {
     const series = safe($('series').value.trim() || 'Series');
     const startNum = Math.max(1, parseInt($('startnum').value, 10) || 1);
@@ -292,11 +307,19 @@ async function renderChapter(ch, o, emit) {
   return n;
 }
 
-async function titlePage(title, author) {
+async function titlePage(title, author, coverBlob) {
   const c = document.createElement('canvas');
   c.width = BW; c.height = 480;
   const x = c.getContext('2d');
   x.fillStyle = '#2b1b4a'; x.fillRect(0, 0, BW, 480);
+  if (coverBlob) {
+    try {
+      const im = await createImageBitmap(coverBlob);
+      const k = Math.min(BW / im.width, 480 / im.height);
+      x.drawImage(im, (BW - im.width * k) / 2, (480 - im.height * k) / 2, im.width * k, im.height * k);
+      return new Promise(r => c.toBlob(r, 'image/jpeg', 0.92));
+    } catch (e) { /* unreadable image: use the generated title page below */ }
+  }
   x.fillStyle = '#ff6fa5'; x.fillRect(40, 150, 240, 3); x.fillRect(40, 340, 240, 3);
   x.fillStyle = '#ffffff'; x.textAlign = 'center'; x.textBaseline = 'middle';
   x.font = '700 28px Georgia, serif';
@@ -351,18 +374,24 @@ async function readEpub(file) {
     chapters.push({title: title || 'Chapter ' + (chapters.length + 1), paras});
   }
   if (!chapters.length) throw new Error('No readable text found. The EPUB may be copy-protected (DRM), which cannot be converted.');
-  return {title: first('dc:title'), author: first('dc:creator'), chapters};
+  let coverHref = null;
+  const cm = [...opf.getElementsByTagName('meta')].find(m => m.getAttribute('name') === 'cover');
+  if (cm) coverHref = manifest[cm.getAttribute('content')];
+  if (!coverHref) for (const it of opf.getElementsByTagName('item')) if ((it.getAttribute('properties') || '').includes('cover-image')) coverHref = it.getAttribute('href');
+  const cf = coverHref && zip.file(decodeURIComponent(dir + coverHref));
+  const cover = cf ? await cf.async('blob') : null;
+  return {title: first('dc:title'), author: first('dc:creator'), chapters, cover};
 }
 
 $('gob').addEventListener('click', async () => {
   if (window.dlUrl) { URL.revokeObjectURL(window.dlUrl); window.dlUrl = null; }
   $('dl').hidden = true; doneEl.hidden = true; logEl.textContent = ''; resultBlob = null;
-  bar.hidden = false; bar.value = 0; $('gob').disabled = true;
+  bar.hidden = false; bar.value = 0; $('outcard').hidden = false; $('gob').disabled = true;
   try {
-    let title = $('btitle').value.trim(), author = '', chapters = [];
+    let title = $('btitle').value.trim(), author = '', chapters = [], epubCover = null;
     for (const f of [...$('bfiles').files].sort(natural)) {
       log('Reading ' + f.name + '…');
-      if (/\.epub$/i.test(f.name)) { const e = await readEpub(f); title = title || e.title; author = e.author; chapters.push(...e.chapters); }
+      if (/\.epub$/i.test(f.name)) { const e = await readEpub(f); title = title || e.title; author = e.author; if (e.cover && !epubCover) epubCover = e.cover; chapters.push(...e.chapters); }
       else if (/\.txt$/i.test(f.name)) chapters.push(...splitTxt(await f.text(), f.name.replace(/\.[^.]+$/, '')));
     }
     const pasted = $('btext').value.trim();
@@ -372,11 +401,11 @@ $('gob').addEventListener('click', async () => {
     const series = safe(title), start = Math.max(1, parseInt($('bstart').value, 10) || 1);
     const o = {size: +$('bsize').value, serif: $('bfont').value === 'serif'};
     const zip = new JSZip();
-    log('"' + title + '": ' + chapters.length + ' chapter(s)');
+    log('"' + title + '": ' + chapters.length + ' chapter(s), cover: ' + (($('bcover').files[0] || epubCover) ? 'yes' : 'generated title page'));
     for (let i = 0; i < chapters.length; i++) {
       const folder = 'Chapter_' + String(i + start).padStart(3, '0');
       let off = 0;
-      if (i === 0 && start === 1) { zip.file('Books/' + series + '/' + folder + '/001.jpg', await titlePage(title, author)); off = 1; }
+      if (i === 0 && start === 1) { zip.file('Books/' + series + '/' + folder + '/001.jpg', await titlePage(title, author, $('bcover').files[0] || epubCover)); off = 1; }
       const n = await renderChapter(chapters[i], o, (k, b) => zip.file('Books/' + series + '/' + folder + '/' + String(k + off).padStart(3, '0') + '.jpg', b));
       log(folder + ': ' + (n + off) + ' pages', 'ok');
       bar.value = Math.round((i + 1) / chapters.length * 100);
@@ -392,6 +421,13 @@ $('gob').addEventListener('click', async () => {
     $('gob').disabled = false;
   }
 });
+function showTab(books) {
+  $('tabManhwa').hidden = books; $('tabBooks').hidden = !books;
+  $('tabm').classList.toggle('on', !books); $('tabb').classList.toggle('on', books);
+  $('outcard').hidden = true; doneEl.hidden = true;
+}
+$('tabm').addEventListener('click', () => showTab(false));
+$('tabb').addEventListener('click', () => showTab(true));
 </script>
 </body>
 </html>
