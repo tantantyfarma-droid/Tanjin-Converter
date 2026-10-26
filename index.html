@@ -378,9 +378,16 @@ async function readEpub(file) {
   const cm = [...opf.getElementsByTagName('meta')].find(m => m.getAttribute('name') === 'cover');
   if (cm) coverHref = manifest[cm.getAttribute('content')];
   if (!coverHref) for (const it of opf.getElementsByTagName('item')) if ((it.getAttribute('properties') || '').includes('cover-image')) coverHref = it.getAttribute('href');
-  if (!coverHref) for (const it of opf.getElementsByTagName('item')) if ((it.getAttribute('media-type') || '').startsWith('image/')) { coverHref = it.getAttribute('href'); break; }
   let cf = coverHref && zip.file(decodeURIComponent(dir + coverHref));
-  if (!cf) {  // no cover listed: use the first picture in the file
+  if (!cf) cf = zip.file(/(^|\/)(cover|001)\.(jpe?g|png|webp)$/i)[0] || null;  // a picture named cover or 001
+  if (!cf) {  // otherwise the first picture the book lists
+    for (const it of opf.getElementsByTagName('item')) {
+      if (!(it.getAttribute('media-type') || '').startsWith('image/')) continue;
+      cf = zip.file(decodeURIComponent(dir + it.getAttribute('href')));
+      if (cf) break;
+    }
+  }
+  if (!cf) {  // last resort: the first picture in the file
     const imgs = zip.file(/\.(jpe?g|png|webp)$/i).sort((a, b) => a.name.localeCompare(b.name, undefined, {numeric: true}));
     cf = imgs[0] || null;
   }
