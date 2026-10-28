@@ -47,6 +47,10 @@ progress{width:100%;height:14px}
 <input type="text" id="startnum" value="1" inputmode="numeric" autocomplete="off">
 <p class="hint">Use 1 for a new series. When adding more chapters to a series already on the reader, enter the next number (for example 6 if the reader has chapters 1 to 5), or the new chapters will overwrite the old ones.</p>
 <div style="height:14px"></div>
+<label for="mcover">Cover image (optional)</label>
+<input type="file" id="mcover" accept="image/*">
+<p class="hint">Saved as the series cover. You can also set a cover on the reader: double-tap, then Set as cover.</p>
+<div style="height:14px"></div>
 <label for="files">Chapters</label>
 <input type="file" id="files" multiple accept="image/*,.zip,.cbz">
 <p class="hint">Pick one or more <b>.zip / .cbz</b> files (each becomes one chapter), or the <b>images</b> of a single chapter. For a whole series in one go, pick a single <b>.zip that has one folder per chapter</b>; each folder becomes a chapter. On a phone, very large series may need splitting into a few zips.</p>
@@ -233,6 +237,8 @@ goEl.addEventListener('click', async () => {
         () => { done++; bar.value = Math.round(done / total * 100); });
       log('  → ' + pages + ' pages', 'ok');
     }
+    const mc = $('mcover').files[0];
+    if (mc) { zip.file(series + '/cover.jpg', await coverJpg(mc)); log('Cover added', 'ok'); }
     log('Packing ZIP…');
     resultBlob = await zip.generateAsync({type: 'blob', compression: 'STORE'});
     resultName = series + '_reader.zip';
@@ -433,6 +439,17 @@ $('gob').addEventListener('click', async () => {
     $('gob').disabled = false;
   }
 });
+async function coverJpg(blob) {  // a 320 x 480 cover.jpg: the picture fitted onto a dark page
+  const c = document.createElement('canvas');
+  c.width = 320; c.height = 480;
+  const x = c.getContext('2d');
+  x.fillStyle = '#2b1b4a'; x.fillRect(0, 0, 320, 480);
+  const im = await createImageBitmap(blob);
+  const k = Math.min(320 / im.width, 480 / im.height);
+  x.drawImage(im, (320 - im.width * k) / 2, (480 - im.height * k) / 2, im.width * k, im.height * k);
+  return new Promise(r => c.toBlob(r, 'image/jpeg', 0.92));
+}
+
 function showTab(books) {
   $('tabManhwa').hidden = books; $('tabBooks').hidden = !books;
   $('tabm').classList.toggle('on', !books); $('tabb').classList.toggle('on', books);
