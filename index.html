@@ -62,6 +62,7 @@ progress{width:100%;height:14px}
 </div>
 
 <div class="card" id="done" hidden>
+<img id="pv" alt="Preview of the first page" hidden style="display:block;max-width:150px;border-radius:8px;margin:0 0 12px">
 <button id="save">Save ZIP</button>
 <a id="dl" class="hint" hidden>If the download didn’t start, tap here.</a>
 <p class="hint">Easiest: open the TanJin menu, tap Wi-Fi, join its hotspot with your phone, and upload this ZIP at 192.168.4.1. Or unzip it and copy the series folder onto the SD card (keep the folder structure).</p>
@@ -217,11 +218,13 @@ async function convertChapter(items, onPage, onItem) {
 goEl.addEventListener('click', async () => {
   if (window.dlUrl) { URL.revokeObjectURL(window.dlUrl); window.dlUrl = null; }
   $('dl').hidden = true;
+  saveSettings();
   goEl.disabled = true; doneEl.hidden = true; logEl.textContent = ''; resultBlob = null;
   bar.hidden = false; bar.value = 0; $('outcard').hidden = false;
   try {
     const series = safe($('series').value.trim() || 'Series');
     const startNum = Math.max(1, parseInt($('startnum').value, 10) || 1);
+    let firstPage = null;
     log('Reading files…');
     const chapters = await loadChapters(filesEl.files);
     const total = chapters.reduce((n, c) => n + c.items.length, 0);
@@ -233,7 +236,7 @@ goEl.addEventListener('click', async () => {
       const folder = 'Chapter_' + String(i + startNum).padStart(3, '0');
       log(folder + ' ← ' + ch.name + ' (' + ch.items.length + ' images)');
       const pages = await convertChapter(ch.items,
-        (n, blob) => zip.file(series + '/' + folder + '/' + String(n).padStart(3, '0') + '.jpg', blob),
+        (n, blob) => { if (!firstPage) firstPage = blob; zip.file(series + '/' + folder + '/' + String(n).padStart(3, '0') + '.jpg', blob); },
         () => { done++; bar.value = Math.round(done / total * 100); });
       log('  → ' + pages + ' pages', 'ok');
     }
@@ -243,9 +246,10 @@ goEl.addEventListener('click', async () => {
     resultBlob = await zip.generateAsync({type: 'blob', compression: 'STORE'});
     resultName = series + '_reader.zip';
     log('Done: ' + (resultBlob.size / 1048576).toFixed(1) + ' MB', 'ok');
+    showPreview(firstPage);
     doneEl.hidden = false;
   } catch (e) {
-    log('Error: ' + (e && e.message || e), 'err');
+    log(friendly(e), 'err');
   } finally {
     goEl.disabled = !filesEl.files.length;
   }
@@ -403,10 +407,11 @@ async function readEpub(file) {
 
 $('gob').addEventListener('click', async () => {
   if (window.dlUrl) { URL.revokeObjectURL(window.dlUrl); window.dlUrl = null; }
+  saveSettings();
   $('dl').hidden = true; doneEl.hidden = true; logEl.textContent = ''; resultBlob = null;
   bar.hidden = false; bar.value = 0; $('outcard').hidden = false; $('gob').disabled = true;
   try {
-    let title = $('btitle').value.trim(), author = '', chapters = [], epubCover = null;
+    let title = $('btitle').value.trim(), author = '', chapters = [], epubCover = null, firstPage = null;
     for (const f of [...$('bfiles').files].sort(natural)) {
       log('Reading ' + f.name + '…');
       if (/\.epub$/i.test(f.name)) { const e = await readEpub(f); title = title || e.title; author = e.author; if (e.cover && !epubCover) epubCover = e.cover; chapters.push(...e.chapters); }
@@ -423,7 +428,7 @@ $('gob').addEventListener('click', async () => {
     for (let i = 0; i < chapters.length; i++) {
       const folder = 'Chapter_' + String(i + start).padStart(3, '0');
       let off = 0;
-      if (i === 0 && start === 1) { zip.file('Books/' + series + '/' + folder + '/001.jpg', await titlePage(title, author, $('bcover').files[0] || epubCover)); off = 1; }
+      if (i === 0 && start === 1) { { const tp = await titlePage(title, author, $('bcover').files[0] || epubCover); firstPage = tp; zip.file('Books/' + series + '/' + folder + '/001.jpg', tp); } off = 1; }
       const n = await renderChapter(chapters[i], o, (k, b) => zip.file('Books/' + series + '/' + folder + '/' + String(k + off).padStart(3, '0') + '.jpg', b));
       log(folder + ': ' + (n + off) + ' pages', 'ok');
       bar.value = Math.round((i + 1) / chapters.length * 100);
@@ -432,9 +437,10 @@ $('gob').addEventListener('click', async () => {
     resultBlob = await zip.generateAsync({type: 'blob', compression: 'STORE'});
     resultName = series + '_book.zip';
     log('Done: ' + (resultBlob.size / 1048576).toFixed(1) + ' MB', 'ok');
+    showPreview(firstPage);
     doneEl.hidden = false;
   } catch (e) {
-    log('Error: ' + (e && e.message || e), 'err');
+    log(friendly(e), 'err');
   } finally {
     $('gob').disabled = false;
   }
@@ -449,6 +455,26 @@ async function coverJpg(blob) {  // a 320 x 480 cover.jpg: the picture fitted on
   x.drawImage(im, (320 - im.width * k) / 2, (480 - im.height * k) / 2, im.width * k, im.height * k);
   return new Promise(r => c.toBlob(r, 'image/jpeg', 0.92));
 }
+
+const KEYS = ['series', 'startnum', 'btitle', 'bstart', 'bsize', 'bfont'];
+function saveSettings() { try { KEYS.forEach(k => localStorage.setItem('tj_' + k, $(k).value)); } catch (e) { /* storage not available */ } }
+function loadSettings() { try { KEYS.forEach(k => { const v = localStorage.getItem('tj_' + k); if (v !== null) $(k).value = v; }); } catch (e) { /* storage not available */ } }
+
+function friendly(e) {  // plain-language messages for the usual problems
+  const m = String((e && e.message) || e);
+  if (/memory|allocation|quota/i.test(m)) return 'The phone ran out of memory. Try fewer chapters at a time.';
+  if (/bitmap|decode|image|source/i.test(m)) return 'One of the pictures could not be read. Check that every file is a normal image (JPG, PNG or WebP).';
+  if (/zip|central directory|corrupt/i.test(m)) return 'That file could not be opened as a ZIP or EPUB. It may be damaged or incomplete.';
+  return m;
+}
+
+function showPreview(blob) {  // a small look at the first page before you save
+  const im = $('pv');
+  if (window.pvUrl) { URL.revokeObjectURL(window.pvUrl); window.pvUrl = null; }
+  if (blob) { window.pvUrl = URL.createObjectURL(blob); im.src = window.pvUrl; im.hidden = false; } else { im.hidden = true; }
+}
+
+loadSettings();
 
 function showTab(books) {
   $('tabManhwa').hidden = books; $('tabBooks').hidden = !books;
