@@ -479,7 +479,7 @@ loadSettings();
 function showTab(books) {
   $('tabManhwa').hidden = books; $('tabBooks').hidden = !books;
   $('tabm').classList.toggle('on', !books); $('tabb').classList.toggle('on', books);
-  $('outcard').hidden = true; doneEl.hidden = true;
+  $('outcard').hidden = true; doneEl.hidden = true; showPreview(null);
 }
 $('tabm').addEventListener('click', () => showTab(false));
 $('tabb').addEventListener('click', () => showTab(true));
